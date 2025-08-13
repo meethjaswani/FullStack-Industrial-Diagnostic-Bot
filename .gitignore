@@ -1,0 +1,6 @@
+.env
+venv/
+__pycache__/
+*.pyc
+data/vector_store/
+data/scada_data.db

@@ -1,0 +1,27 @@
+# Dockerfile.api
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+# Install small system deps commonly needed (adjust if you need tesseract, etc.)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential poppler-utils && rm -rf /var/lib/apt/lists/*
+
+# Install python deps
+COPY requirements.txt /app/requirements.txt
+RUN pip install --upgrade pip && pip install --no-cache-dir -r /app/requirements.txt
+
+# Copy app code
+COPY . /app
+
+# Expose API port
+EXPOSE 8000
+
+# If you currently start your API with `python api_server.py`, use the next line:
+CMD ["python", "api_server.py"]
+
+# If you use uvicorn / FastAPI, comment the line above and use:
+# CMD ["uvicorn", "api_server:app", "--host", "0.0.0.0", "--port", "8000"]
