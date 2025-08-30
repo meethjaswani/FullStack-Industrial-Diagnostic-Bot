@@ -33,6 +33,10 @@ if 'api_key_set' not in st.session_state:
     st.session_state.api_key_set = False
 if 'conversation_history' not in st.session_state:
     st.session_state.conversation_history = []
+if 'query_input' not in st.session_state:
+    st.session_state.query_input = ""
+if 'feedback_input' not in st.session_state:
+    st.session_state.feedback_input = ""
 
 def call_api(endpoint: str, method: str = "GET", data: Optional[Dict] = None):
     """API call function with better error handling"""
@@ -71,36 +75,46 @@ def call_api(endpoint: str, method: str = "GET", data: Optional[Dict] = None):
         st.error(f"Error: {e}")
         return None
 
-def send_human_decision(choice: str):
-    """Send human decision to API"""
+def send_human_decision(choice: str, feedback: str = None):
+    """Send human decision to API with optional natural language feedback"""
     current_time = time.time()
-    
+
     # Prevent duplicate submissions (within 2 seconds)
     if current_time - st.session_state.last_decision_time < 2:
         st.warning("⏳ Please wait a moment before making another decision...")
         return False
-    
+
     # Check if system is actually waiting for input
     if not st.session_state.is_processing:
         st.error("❌ No active workflow. Please submit a query first.")
         return False
-    
+
     decision_data = {"choice": choice}
-    
+    if feedback and feedback.strip():
+        decision_data["feedback"] = feedback.strip()
+
     result = call_api("/api/human-decision", "POST", decision_data)
-    
+
     if result:
         st.session_state.last_decision_time = current_time
         st.success(f"✅ Decision sent: {choice}")
-        
+
+        # Clear the feedback input field after successful decision
+        st.session_state.feedback_input = ""
+
         # Show what the choice means
         choice_meanings = {
-            "c": "Continue with current plan",
-            "s": "Synthesize final answer now", 
+            "c": "Continue with current plan (feedback modifies existing steps)",
+            "e": "Edit plan using feedback (replaces with new AI-generated plan)",
+            "s": "Synthesize final answer now (incorporates feedback if provided)",
             "q": "Quit the workflow"
         }
         st.info(f"📋 Action: {choice_meanings.get(choice, 'Unknown action')}")
-        
+
+        # Show feedback if provided (only if it's different from previous)
+        if feedback and feedback.strip():
+            st.info(f"💬 {feedback}")
+
         time.sleep(1)  # Brief pause for user feedback
         st.rerun()
         return True
@@ -172,12 +186,14 @@ def format_message_simple(entry):
         st.success(clean_message)
     elif "⚠️" in clean_message or "WARNING" in clean_message.upper():
         st.warning(clean_message)
-    elif "❌" in clean_message or "ERROR" in clean_message.upper():
+    elif ("❌" in clean_message or "ERROR" in clean_message.upper()) and "Remaining plan steps" not in clean_message and "Current plan" not in clean_message and "SCADA: Check error codes" not in clean_message:
         st.error(clean_message)
     elif "👤" in clean_message or "Human decision" in clean_message:
         st.info(clean_message)
     elif any(emoji in clean_message for emoji in ["🧠", "🔧", "📊", "📖", "🤔", "🧬"]):
         st.info(clean_message)
+    elif "Remaining plan steps" in clean_message or "Current plan" in clean_message or "SCADA: Check error codes" in clean_message:
+        st.text(clean_message)  # Display plan-related messages as plain text
     else:
         st.text(clean_message)
 
@@ -357,21 +373,30 @@ with col1:
     st.header("📝 Submit Query")
     
     # Query input
+    def update_query_input():
+        st.session_state.query_input = st.session_state.query_input_widget
+
     query_input = st.text_input(
         "Enter your diagnostic query:",
+        value=st.session_state.query_input,
+        key="query_input_widget",
         placeholder="e.g., 'Pressure is high, what should I do?'",
-        disabled=is_processing
+        disabled=is_processing,
+        on_change=update_query_input
     )
-    
+
     # Submit button
     if st.button("🚀 Submit Query", disabled=not query_input.strip() or is_processing):
         if query_input.strip():
             st.session_state.current_query = query_input.strip()
             st.session_state.terminal_data = {"general_output": [], "iterations": {}}
-            
+
+            # Clear the query input field after submission
+            st.session_state.query_input = ""
+
             # Prepare query data
             query_data = {"query": query_input.strip()}
-            
+
             # Submit query to API
             result = call_api("/api/query", "POST", query_data)
             if result:
@@ -531,30 +556,62 @@ else:
 if st.session_state.awaiting_decision:
     st.header("🤝 Human Decision Required")
     st.warning("🔄 **The system is waiting for your decision!** Please choose an action below.")
-    
+
+    # Natural Language Feedback Input
+    st.subheader("💬 Natural Language Feedback")
+
+    def update_feedback_input():
+        st.session_state.feedback_input = st.session_state.feedback_input_widget
+
+    feedback_input = st.text_area(
+        "Provide additional instructions or feedback:",
+        value=st.session_state.feedback_input,
+        key="feedback_input_widget",
+        placeholder="e.g., 'search for high pressure troubleshooting methods', 'get historical temperature data', 'find pump noise procedures'...",
+        height=80,
+        help="🔤 Optional for Continue, Synthesize, Quit. 🔴 Required for Edit (creates new plan).",
+        on_change=update_feedback_input
+    )
+
     # Decision buttons - Only shown when decision is required
-    decision_col1, decision_col2, decision_col3 = st.columns(3)
+    st.subheader("🎯 Choose Action")
+    decision_col1, decision_col2, decision_col3, decision_col4 = st.columns(4)
 
     with decision_col1:
         if st.button("▶️ Continue", key="btn_continue", type="primary"):
-            send_human_decision("c")
+            send_human_decision("c", feedback_input)
 
     with decision_col2:
-        if st.button("🔬 Synthesize", key="btn_synthesize", type="secondary"):
-            send_human_decision("s")
+        if st.button("✏️ Edit", key="btn_edit"):
+            if feedback_input and feedback_input.strip():
+                send_human_decision("e", feedback_input)
+            else:
+                st.warning("⚠️ Please provide feedback in the text area above before clicking Edit.")
 
     with decision_col3:
-        if st.button("🛑 Quit", key="btn_quit"):
-            send_human_decision("q")
+        if st.button("🔬 Synthesize", key="btn_synthesize", type="secondary"):
+            send_human_decision("s", feedback_input)
 
-    # Show helpful info
+    with decision_col4:
+        if st.button("🛑 Quit", key="btn_quit"):
+            send_human_decision("q", feedback_input)
+
+    # Enhanced helpful info
     st.info("""
     **Decision Interface:**
-    - **Continue**: Proceed with the current plan
-    - **Synthesize**: Force the system to provide a final answer now
-    - **Quit**: Stop the current workflow
+    - **Continue**: Proceed with the current plan (feedback optional - adds to existing plan)
+    - **✏️ Edit**: Replace current plan with new AI-generated plan (feedback required)
+    - **Synthesize**: Force the system to provide a final answer now (feedback optional)
+    - **Quit**: Stop the current workflow (feedback optional)
+
+    **💡 Edit Feedback Examples:**
+    - "search for high pressure troubleshooting methods"
+    - "get historical temperature data for last month"
+    - "find pump noise diagnostic procedures"
+    - "check for recent alarm logs and error codes"
+    - "look up calibration procedures for pressure sensors"
     """)
-elif st.session_state.is_processing:
+elif st.session_state.is_processing and not st.session_state.awaiting_decision:
     st.header("🤝 Human Decision Interface")
     st.info("⏳ **System is processing your query...** The decision interface will appear when your input is needed.")
 else:

@@ -62,14 +62,64 @@ def call_groq_structured(prompt: str, model_class: BaseModel, model_name: str = 
         if response.status_code == 200:
             content = response.json()["choices"][0]["message"]["content"]
             data = json.loads(content)
-            return model_class.model_validate(data)
+
+            # Handle different response formats and fix common issues
+            if model_class == Plan:
+                # If the response has a nested structure, try to extract the steps
+                if "steps" not in data:
+                    # Try common alternative structures
+                    if "diagnosticPlan" in data and "steps" in data["diagnosticPlan"]:
+                        data = {"steps": data["diagnosticPlan"]["steps"]}
+                    elif "plan" in data and isinstance(data["plan"], list):
+                        data = {"steps": data["plan"]}
+                    elif "actions" in data and isinstance(data["actions"], list):
+                        data = {"steps": data["actions"]}
+                    else:
+                        # If no steps found, create a default plan
+                        print(f"⚠️ Groq API returned unexpected format: {data}")
+                        data = {"steps": ["SCADA: Get system information"]}
+                
+                # Ensure steps are strings, not objects
+                if "steps" in data and isinstance(data["steps"], list):
+                    processed_steps = []
+                    for step in data["steps"]:
+                        if isinstance(step, dict):
+                            # Extract the step description from object
+                            if "step" in step:
+                                processed_steps.append(step["step"])
+                            elif "description" in step:
+                                processed_steps.append(step["description"])
+                            elif "action" in step:
+                                processed_steps.append(step["action"])
+                            else:
+                                # Convert entire object to string
+                                processed_steps.append(str(step))
+                        elif isinstance(step, str):
+                            processed_steps.append(step)
+                        else:
+                            processed_steps.append(str(step))
+                    data["steps"] = processed_steps
+
+            # Handle Act model specially - extract the inner action
+            if model_class == Act:
+                act = model_class.model_validate(data)
+                return act.action  # Return the inner Response or Plan
+            else:
+                return model_class.model_validate(data)
         else:
-            print(f"❌ Groq API error: {response.status_code} - {response.text}")
+
             raise Exception(f"API error: {response.status_code}")
     except Exception as e:
-        print(f"❌ Groq error: {e}")
+        print(f"❌ Groq API call failed. Error: {str(e)}")
+        print(f"❌ Exception type: {type(e).__name__}")
+        import traceback
+        traceback.print_exc()
+        
         # Provide a default fallback based on the model_class expected
-        if model_class == Plan:
+        if model_class == Act:
+            # For Act, return a Plan by default
+            return Plan(steps=["SCADA: Get system information"])
+        elif model_class == Plan:
             return Plan(steps=["SCADA: Get system information"])
         else:
-            return Act(action=Response(response="I encountered an error processing your request."))
+            return Response(response="I encountered an error processing your request.")

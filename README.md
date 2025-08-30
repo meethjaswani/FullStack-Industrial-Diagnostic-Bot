@@ -74,6 +74,18 @@ Place any PDF technical manuals in `data/pdf_manuals/` folder. Supported brands 
 - And more...
 
 #### 4. Start the Services
+
+**Option A: Use the Development Startup Script (Recommended)**
+```bash
+./start_dev.sh
+```
+This script automatically:
+- Activates the virtual environment
+- Validates API key setup
+- Starts both API server and web interface
+- Provides helpful startup diagnostics
+
+**Option B: Manual Startup**
 ```bash
 # Terminal 1: Start API server
 python api_server.py
@@ -150,6 +162,7 @@ SentientAI-main/
 ├── api_server.py             # REST API backend
 ├── streamlit_app.py          # Web interface frontend
 ├── shared_decision.py        # Human decision coordination
+├── start_dev.sh              # Development startup script
 ├── docker-compose.yml        # Docker orchestration
 ├── Dockerfile.api            # API service container
 ├── Dockerfile.web            # Web service container
@@ -222,8 +235,72 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 **🤝 Human-in-the-Loop:**
 - **Automatically triggered after 1 iteration**
 - Reviews system decisions at critical points
-- Can continue, force synthesis, or quit
+- **Enhanced decision interface with natural language feedback**
+- **Smart plan modification and replacement capabilities**
 - Maintains control over the diagnostic process
+
+## 🤝 Enhanced Human Decision Interface
+
+The system features an intelligent human-in-the-loop interface that gives you full control over the diagnostic process:
+
+> ### 🚨 **QUICK BEHAVIOR REFERENCE**
+> 
+> | Action | Feedback | Result |
+> |--------|----------|--------|
+> | **Continue** | `"check temperature correlations"` | ✏️ **Modifies** existing step: `"SCADA: Check pressure and temperature correlations"` |
+> | **✏️ Edit** | `"check temperature correlations"` | 🔄 **Replaces** plan: `"SCADA: Get temperature correlation data"` |
+> | **Continue** | None | ➡️ **Proceeds** with existing plan unchanged |
+> 
+> **💡 Key Difference**: Continue = Modify existing steps | Edit = Create new plan
+
+### 🎯 **BUTTON BEHAVIOR SUMMARY**
+
+> **📊 Quick Reference Table**
+
+| Action | Feedback | Result |
+|--------|----------|--------|
+| **Continue** | `"check temperature correlations"` | ✏️ Modifies existing step: `"SCADA: Check pressure and temperature correlations"` |
+| **✏️ Edit** | `"check temperature correlations"` | 🔄 Replaces plan: `"SCADA: Get temperature correlation data"` |
+| **Continue** | None | ➡️ Proceeds with existing plan unchanged |
+
+### 📋 Decision Button Requirements
+
+| Button | Feedback Required | Action |
+|--------|-------------------|--------|
+| **Continue** | Optional | Add feedback to current plan (modifies existing steps) |
+| **✏️ Edit** | **Required** | Replace plan with new AI-generated plan based on feedback |
+| **Synthesize** | Optional | Force final answer (incorporates feedback if provided) |
+| **Quit** | Optional | End workflow (logs feedback for context) |
+
+### 💬 **FEEDBACK EXAMPLES**
+
+#### 🔄 **Continue Button** (Modifies Existing Plan)
+| Original Step | Your Feedback | Modified Result |
+|---------------|---------------|-----------------|
+| `"SCADA: Check pressure readings"` | `"check temperature correlations"` | `"SCADA: Check pressure and temperature correlations"` |
+| `"MANUAL: Search for pump procedures"` | `"focus on last 24 hours"` | `"MANUAL: Search for pump procedures from last 24 hours"` |
+| `"SCADA: Get error codes"` | `"also include vibration data"` | `"SCADA: Get error codes and vibration data"` |
+
+#### ✏️ **Edit Button** (Replaces Entire Plan)
+| Your Feedback | New AI-Generated Plan |
+|---------------|----------------------|
+| `"search for high pressure troubleshooting methods"` | `"MANUAL: Search for high pressure troubleshooting procedures"` |
+| `"get historical temperature data for last month"` | `"SCADA: Get historical temperature data for last month"` |
+| `"find pump noise diagnostic procedures"` | `"MANUAL: Find pump noise diagnostic procedures"` |
+
+#### 📚 **Conversation History** (Follow-up Queries)
+| Example Query | System Understanding |
+|---------------|---------------------|
+| `"What about the pressure data from my last query?"` | References previous analysis and gets current pressure |
+| `"Check the temperature trends we discussed earlier"` | Uses context from previous temperature conversation |
+| `"Compare this with the vibration data we analyzed"` | Correlates current data with previous vibration analysis |
+
+### 🎯 Intelligent Plan Management
+
+- **Continue**: Modifies existing plan steps to incorporate your feedback
+- **Edit**: Uses AI to generate completely new plan based on your specific instructions
+- **Smart Step Limits**: System prevents excessive steps while allowing consolidated feedback-enhanced operations
+- **Context Awareness**: AI considers already completed work to avoid duplication
 
 ## 🎯 Key Features & Improvements
 
@@ -237,6 +314,63 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 - ✅ **Auto-tool Detection** - Intelligently chooses SCADA vs Manual search
 - ✅ **Comprehensive Reporting** - Structured final answers with actionable recommendations
 - ✅ **Multi-turn Conversations** - Builds intelligent context from previous queries
+- ✅ **Natural Language Feedback** - Guide the system with plain English instructions
+- ✅ **Intelligent Plan Modification** - Continue modifies existing steps, Edit creates new plans
+- ✅ **Smart Step Management** - Prevents excessive steps while allowing feedback-enhanced operations
+
+## 💡 **COMPLETE WORKFLOW EXAMPLES**
+
+### 🎯 **Real-World Scenario: Pump Troubleshooting with Human Feedback**
+
+```
+🔧 INITIAL QUERY: "The pump is making unusual noise, what should I check?"
+
+📋 SYSTEM PLAN:
+1. SCADA: Check current vibration readings  
+2. MANUAL: Search for unusual noise procedures
+
+⚙️ STEP 1 EXECUTED: "SCADA: Check current vibration readings"
+Result: "Vibration detected at 15Hz, above normal range of 5-10Hz"
+
+🤝 HUMAN DECISION POINT:
+Current Plan: ["MANUAL: Search for unusual noise procedures"]
+
+👤 HUMAN CHOICE: Continue with feedback: "also check temperature correlations"
+🔄 MODIFIED PLAN: ["MANUAL: Search for unusual noise and temperature correlation procedures"]
+
+⚙️ STEP 2 EXECUTED: Modified step completed
+Result: "Found troubleshooting guide linking high vibration to temperature fluctuations"
+
+🤝 HUMAN DECISION POINT:
+No remaining steps
+
+👤 HUMAN CHOICE: Edit with feedback: "get historical temperature data for last week"
+✏️ NEW PLAN: ["SCADA: Get historical temperature data for last week"]
+
+⚙️ STEP 3 EXECUTED: New plan step
+Result: "Temperature fluctuated between 65-85°F last week, correlating with vibration spikes"
+
+🧬 FINAL SYNTHESIS: "Pump noise is caused by thermal expansion from temperature fluctuations 
+(65-85°F) causing misalignment and high vibration (15Hz vs normal 5-10Hz). 
+Recommend: Install temperature stabilization and realign pump housing."
+```
+
+### 📚 **Multi-Turn Conversation Example**
+
+```
+TURN 1: "What's the current pressure reading?"
+→ Result: "Current pressure: 75 PSI (normal range: 60-80 PSI)"
+
+TURN 2: "What about the temperature data from my last query?"
+→ System Context: References previous pressure analysis
+→ Plan: ["SCADA: Get current temperature readings for pressure system"]
+→ Result: "Temperature: 68°F, within normal operating range"
+
+TURN 3: "Compare this with the readings we discussed yesterday"
+→ System Context: References yesterday's pressure/temperature discussion  
+→ Plan: ["SCADA: Get comparative readings from yesterday for analysis"]
+→ Result: "Yesterday: 78 PSI, 71°F. Today: 75 PSI, 68°F. Slight decrease in both values."
+```
 
 ## 💡 Example Diagnostic Workflows
 
@@ -301,6 +435,7 @@ Turn 3: "Compare this with the vibration data we discussed"
 
 ## 🚀 Quick Start Commands
 
+**Docker (Production):**
 ```bash
 # Start the system
 docker-compose up -d --build
@@ -314,6 +449,38 @@ docker-compose down
 # View logs
 docker-compose logs -f
 ```
+
+**Development:**
+```bash
+# Start with automated setup
+./start_dev.sh
+
+# Manual start (alternative)
+source venv/bin/activate
+python api_server.py & streamlit run streamlit_app.py
+```
+
+## 📈 Recent Updates & Improvements
+
+### v2.1 - Enhanced Human Decision Interface
+- ✅ **Smart Button Behavior**: Continue modifies existing plans, Edit replaces them entirely
+- ✅ **Natural Language Feedback**: Guide the system with plain English instructions
+- ✅ **Intelligent Plan Management**: AI considers context and avoids excessive steps
+- ✅ **Improved Step Counting**: Flexible limits that accommodate consolidated feedback-enhanced operations
+- ✅ **Enhanced Error Handling**: Better diagnostics and graceful fallbacks
+- ✅ **Development Automation**: New `start_dev.sh` script for easier development setup
+
+### v2.0 - Replanning System Fixes
+- ✅ **Resolved Replanning Failures**: Fixed critical errors in decision-making logic
+- ✅ **Enhanced API Response Parsing**: Robust handling of different Groq API response formats
+- ✅ **Improved Environment Management**: Better validation and setup processes
+- ✅ **Comprehensive Testing**: Full test suite for reliability verification
+
+### v1.5 - Core Features
+- ✅ **Multi-Agent Architecture**: Coordinated planning, execution, and synthesis
+- ✅ **Human-in-the-Loop**: Interactive decision points with human oversight
+- ✅ **Multi-turn Conversations**: Context-aware follow-up question handling
+- ✅ **Professional Output**: Clean, organized diagnostic reports
 
 ---
 

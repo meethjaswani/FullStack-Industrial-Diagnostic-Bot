@@ -51,6 +51,7 @@ class QueryRequest(BaseModel):
 
 class HumanDecision(BaseModel):
     choice: str
+    feedback: Optional[str] = None
 
 class AwaitingHumanInput(BaseModel):
     awaiting: bool
@@ -261,15 +262,26 @@ async def submit_human_decision(decision: HumanDecision, x_groq_api_key: Optiona
     # Set API key if provided in headers
     if x_groq_api_key:
         set_groq_api_key(x_groq_api_key)
-        
-    # Store in shared decision file
+
+    # Store in shared decision file with feedback support
     import shared_decision
-    shared_decision.set_decision(decision.choice)
-    
+    shared_decision.set_decision(decision.choice, decision.feedback)
+
     # Also store in system state (backup)
-    system_state.human_decision_response = decision.choice
-    
-    return {"status": "decision_received", "decision": decision.choice}
+    system_state.human_decision_response = {
+        "choice": decision.choice,
+        "feedback": decision.feedback
+    }
+
+    # Log feedback if provided
+    if decision.feedback and decision.feedback.strip():
+        print(f"💬 Human provided natural language feedback: {decision.feedback}")
+
+    return {
+        "status": "decision_received",
+        "decision": decision.choice,
+        "feedback_provided": bool(decision.feedback and decision.feedback.strip())
+    }
 
 @app.get("/api/human-decision-response")
 async def get_human_decision_response():
@@ -277,9 +289,12 @@ async def get_human_decision_response():
     import shared_decision
     decision = shared_decision.get_decision()
     if decision:
-        return {"decision": decision}
+        return {
+            "decision": decision.get("choice") if isinstance(decision, dict) else decision,
+            "feedback": decision.get("feedback") if isinstance(decision, dict) else None
+        }
     else:
-        return {"decision": None}
+        return {"decision": None, "feedback": None}
 
 @app.delete("/api/human-decision-response")
 async def clear_human_decision_response():

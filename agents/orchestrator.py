@@ -100,7 +100,8 @@ class Orchestrator:
             print("No new steps proposed by Replan Agent.")
 
         print("\nOptions:")
-        print(" 'Continue': Proceed with the current plan.")
+        print(" 'Continue': Proceed with current plan (optional feedback modifies existing steps).")
+        print(" 'Edit': Replace plan with new AI-generated plan (requires feedback).")
         print(" 'Synthesize': Force synthesis of a final answer now.")
         print(" 'Quit': Abort the workflow.")
 
@@ -119,27 +120,57 @@ class Orchestrator:
             # Check if decision is available in shared file
             decision = shared_decision.get_decision()
             if decision:
-                choice = decision
-                print(f"👤 Human decision received: {choice}")
-                
+                # Handle both old format (string) and new format (dict)
+                if isinstance(decision, dict):
+                    choice = decision.get("choice")
+                    feedback = decision.get("feedback")
+                    print(f"👤 Human decision received: {choice}")
+                    if feedback and feedback.strip():
+                        print(f"💬 Human feedback: {feedback}")
+                else:
+                    choice = decision
+                    feedback = None
+                    print(f"👤 Human decision received: {choice}")
+
                 # Clear the decision
                 shared_decision.clear_decision()
-                
+
                 # Clear the awaiting human input flag since we received a decision
                 try:
                     import requests
                     requests.post("http://localhost:8000/api/set-awaiting-human-input", json={"awaiting": False}, timeout=1)
                 except:
                     pass  # Ignore if API call fails
-                
+
                 if choice in ['c', 'continue']:
-                    return {"action": "continue"}
+                    result = {"action": "continue"}
+                    if feedback and feedback.strip():
+                        result["feedback"] = feedback
+                    return result
+                elif choice in ['e', 'edit']:
+                    if feedback and feedback.strip():
+                        result = {"action": "edit", "feedback": feedback}
+                        return result
+                    else:
+                        # Edit requires feedback - this should not happen due to frontend validation
+                        print("⚠️ Edit action requires feedback, treating as continue")
+                        result = {"action": "continue"}
+                        return result
                 elif choice in ['s', 'synthesize']:
-                    return {"action": "synthesize"}
+                    result = {"action": "synthesize"}
+                    if feedback and feedback.strip():
+                        result["feedback"] = feedback
+                    return result
                 elif choice in ['q', 'quit']:
-                    return {"action": "quit"}
+                    result = {"action": "quit"}
+                    if feedback and feedback.strip():
+                        result["feedback"] = feedback
+                    return result
                 else:
-                    return {"action": "continue"}  # Default fallback
+                    result = {"action": "continue"}  # Default fallback
+                    if feedback and feedback.strip():
+                        result["feedback"] = feedback
+                    return result
             
             # Debug: Print what we're checking every 10 seconds
             if int(elapsed_time) % 10 == 0 and elapsed_time > 0:
@@ -217,16 +248,11 @@ class Orchestrator:
             # 3. Replan Step
             print("\n--- Replan Step ---")
             
-            # Check if there's human feedback to process
-            if state.get("human_feedback"):
-                print(f"💬 {self.name}: Processing human feedback in replan step: {state['human_feedback']}")
-            
             replan_output = self.replan_agent.decide_next_action(state)
-            
-            # Clear human feedback after it's been processed
-            if state.get("human_feedback"):
-                print(f"🧹 {self.name}: Clearing processed human feedback")
-                state.pop("human_feedback", None)
+
+            # Clear human feedback and edit mode flag after processing
+            state.pop("human_feedback", None)
+            state.pop("edit_mode", None)
 
             # Update state based on replan agent's decision
             if "ready_for_synthesis" in replan_output:
@@ -237,9 +263,9 @@ class Orchestrator:
                 # Prevent duplicate steps from being added
                 new_steps = replan_output["plan"]
                 existing_steps = state["plan"]
-                
+
                 unique_new_steps = [step for step in new_steps if step not in existing_steps]
-                
+
                 if unique_new_steps:
                     state["plan"] = existing_steps + unique_new_steps
                     print(f"📋 Replan Agent: Added {len(unique_new_steps)} new step(s)")
@@ -294,12 +320,42 @@ class Orchestrator:
                     elif human_decision["action"] == "synthesize":
                         state["ready_for_synthesis"] = True
                         print(f"➡️ {self.name}: Human forced synthesis.")
+                        # Store feedback even for synthesis decisions (only if feedback is provided)
+                        feedback_text = human_decision.get("feedback", "").strip()
+                        if feedback_text:
+                            state["human_feedback"] = feedback_text
+                    elif human_decision["action"] == "edit":
+                        # Use planner agent to create a completely new plan based on feedback
+                        feedback_text = human_decision.get("feedback", "").strip()
+                        if feedback_text:
+                            print(f"✏️ {self.name}: Human chose to edit plan with feedback: {feedback_text}")
+                            # Generate new plan using planner agent
+                            new_plan_output = self.planner_agent.create_plan_from_feedback(state, feedback_text)
+                            new_plan = new_plan_output.get("plan", [])
+                            if new_plan:
+                                # Replace the current plan completely
+                                state["plan"] = new_plan
+                                print(f"📋 {self.name}: Plan replaced with {len(new_plan)} new steps based on feedback")
+                            else:
+                                print(f"⚠️ {self.name}: Failed to generate new plan from feedback, keeping current plan")
+                        else:
+                            print(f"⚠️ {self.name}: Edit requested but no feedback provided")
                     elif human_decision["action"] == "continue":
-                        # Store human feedback for replan agent to use
-                        if human_decision.get("feedback"):
-                            state["human_feedback"] = human_decision["feedback"]
-                            print(f"💬 {self.name}: Human provided feedback for continuation: {human_decision['feedback']}")
-                        print(f"▶️ {self.name}: Human chose to continue with current plan.")
+                        # Handle continue with feedback by modifying existing plan
+                        feedback_text = human_decision.get("feedback", "").strip()
+                        if feedback_text:
+                            print(f"🔄 {self.name}: Human chose to continue with feedback: {feedback_text}")
+                            # Use planner to modify existing plan based on feedback
+                            modified_plan_output = self.planner_agent.modify_plan_with_feedback(state, feedback_text)
+                            modified_plan = modified_plan_output.get("plan", [])
+                            if modified_plan:
+                                # Replace the remaining plan with modified version
+                                state["plan"] = modified_plan
+                                print(f"📋 {self.name}: Plan modified with {len(modified_plan)} steps incorporating feedback")
+                            else:
+                                print(f"⚠️ {self.name}: Failed to modify plan with feedback, keeping original plan")
+                        else:
+                            print(f"➡️ {self.name}: Human chose to continue without feedback")
 
         # Additional human review if we exited the loop without synthesis
         if not state["ready_for_synthesis"] and not state["response"] and current_iteration > 0:
@@ -313,15 +369,45 @@ class Orchestrator:
             if human_decision["action"] == "quit":
                 state["response"] = "Workflow aborted by human."
                 print(f"🛑 {self.name}: Workflow aborted by human. Ending.")
+            elif human_decision["action"] == "edit":
+                # Use planner agent to create a completely new plan based on feedback
+                feedback_text = human_decision.get("feedback", "").strip()
+                if feedback_text:
+                    print(f"✏️ {self.name}: Human chose to edit plan with feedback: {feedback_text}")
+                    # Generate new plan using planner agent
+                    new_plan_output = self.planner_agent.create_plan_from_feedback(state, feedback_text)
+                    new_plan = new_plan_output.get("plan", [])
+                    if new_plan:
+                        # Replace the current plan completely
+                        state["plan"] = new_plan
+                        print(f"📋 {self.name}: Plan replaced with {len(new_plan)} new steps based on feedback")
+                    else:
+                        print(f"⚠️ {self.name}: Failed to generate new plan from feedback, keeping current plan")
+                else:
+                    print(f"⚠️ {self.name}: Edit requested but no feedback provided")
             elif human_decision["action"] == "synthesize":
                 state["ready_for_synthesis"] = True
                 print(f"➡️ {self.name}: Human forced synthesis.")
+                # Store feedback even for synthesis decisions (only if feedback is provided)
+                feedback_text = human_decision.get("feedback", "").strip()
+                if feedback_text:
+                    state["human_feedback"] = feedback_text 
             elif human_decision["action"] == "continue":
-                # Store human feedback for replan agent to use
-                if human_decision.get("feedback"):
-                    state["human_feedback"] = human_decision["feedback"]
-                    print(f"💬 {self.name}: Human provided feedback for continuation: {human_decision['feedback']}")
-                print(f"▶️ {self.name}: Human chose to continue with current plan.")
+                # Handle continue with feedback by modifying existing plan
+                feedback_text = human_decision.get("feedback", "").strip()
+                if feedback_text:
+                    print(f"🔄 {self.name}: Human chose to continue with feedback: {feedback_text}")
+                    # Use planner to modify existing plan based on feedback
+                    modified_plan_output = self.planner_agent.modify_plan_with_feedback(state, feedback_text)
+                    modified_plan = modified_plan_output.get("plan", [])
+                    if modified_plan:
+                        # Replace the remaining plan with modified version
+                        state["plan"] = modified_plan
+                        print(f"📋 {self.name}: Plan modified with {len(modified_plan)} steps incorporating feedback")
+                    else:
+                        print(f"⚠️ {self.name}: Failed to modify plan with feedback, keeping original plan")
+                else:
+                    print(f"➡️ {self.name}: Human chose to continue without feedback")
 
         # 4. Synthesizer Step
         if state["ready_for_synthesis"] and not state["response"]:
@@ -401,3 +487,4 @@ Provide a concise summary focusing on the most important findings and recommenda
     def clear_conversation_history(self):
         """Clear the conversation history"""
         self.conversation_history = []
+
