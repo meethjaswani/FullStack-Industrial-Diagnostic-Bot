@@ -2,5 +2,15 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
 data/vector_store/
 data/scada_data.db
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+logs/
+vector_store/
