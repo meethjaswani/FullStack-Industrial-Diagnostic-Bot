@@ -5,6 +5,7 @@ Simple Readable SentientGrid Frontend - Just make existing output cleaner
 import streamlit as st
 import time
 import requests
+import os
 from typing import Optional, Dict
 import json
 
@@ -30,11 +31,15 @@ if 'groq_api_key' not in st.session_state:
     st.session_state.groq_api_key = ""
 if 'api_key_set' not in st.session_state:
     st.session_state.api_key_set = False
+if 'conversation_history' not in st.session_state:
+    st.session_state.conversation_history = []
 
 def call_api(endpoint: str, method: str = "GET", data: Optional[Dict] = None):
     """API call function with better error handling"""
     try:
-        url = f"http://api:8000{endpoint}"
+        # Use Docker service name when running in container, localhost when running locally
+        api_host = os.environ.get('API_HOST', 'localhost')
+        url = f"http://{api_host}:8000{endpoint}"
         headers = {}
         
         # Add API key to headers if available
@@ -81,6 +86,7 @@ def send_human_decision(choice: str):
         return False
     
     decision_data = {"choice": choice}
+    
     result = call_api("/api/human-decision", "POST", decision_data)
     
     if result:
@@ -91,7 +97,6 @@ def send_human_decision(choice: str):
         choice_meanings = {
             "c": "Continue with current plan",
             "s": "Synthesize final answer now", 
-            "e": "Edit the plan (experimental)",
             "q": "Quit the workflow"
         }
         st.info(f"📋 Action: {choice_meanings.get(choice, 'Unknown action')}")
@@ -106,6 +111,20 @@ def send_human_decision(choice: str):
         else:
             st.error("❌ Failed to send decision")
         return False
+
+def get_conversation_history():
+    """Get conversation history from API"""
+    try:
+        result = call_api("/api/conversation-history")
+        if result and "conversation_history" in result:
+            return result["conversation_history"]
+    except:
+        pass
+    return []
+
+def update_conversation_history():
+    """Update conversation history from API"""
+    st.session_state.conversation_history = get_conversation_history()
 
 def is_important_message(message):
     """Check if message is important enough to show"""
@@ -284,14 +303,27 @@ if st.session_state.api_key_set:
     with st.sidebar:
         st.header("📊 System Status")
     
-        # Test connection
+                # Test connection
         if st.button("🔍 Test Connection"):
             status = call_api("/api/status")
             if status:
                 st.success("✅ API Connected")
             else:
                 st.error("❌ API Not Connected")
-    
+        
+        # Conversation information
+        if st.session_state.conversation_history:
+            st.subheader("💬 Current Conversation")
+            st.info(f"**Turns:** {len(st.session_state.conversation_history)}")
+            
+            if st.session_state.conversation_history:
+                last_turn = st.session_state.conversation_history[-1]
+                st.markdown("**Last Query:**")
+                st.text(last_turn['user_query'][:50] + "..." if len(last_turn['user_query']) > 50 else last_turn['user_query'])
+                
+                st.markdown("**Last Findings:**")
+                st.text(last_turn['context_summary'][:100] + "..." if len(last_turn['context_summary']) > 100 else last_turn['context_summary'])
+        
         # Clear history
         if st.button("🗑️ Clear History"):
             result = call_api("/api/history", "DELETE")
@@ -314,15 +346,15 @@ if st.session_state.api_key_set:
     else:
         st.error("🔴 API Offline")
 
+# Get current status for the entire page
+status = call_api("/api/status")
+is_processing = status.get('is_processing', False) if status else False
+
 # Main content area
 col1, col2 = st.columns([3, 1])
 
 with col1:
     st.header("📝 Submit Query")
-    
-    # Get current status
-    status = call_api("/api/status")
-    is_processing = status.get('is_processing', False) if status else False
     
     # Query input
     query_input = st.text_input(
@@ -337,8 +369,11 @@ with col1:
             st.session_state.current_query = query_input.strip()
             st.session_state.terminal_data = {"general_output": [], "iterations": {}}
             
+            # Prepare query data
+            query_data = {"query": query_input.strip()}
+            
             # Submit query to API
-            result = call_api("/api/query", "POST", {"query": query_input.strip()})
+            result = call_api("/api/query", "POST", query_data)
             if result:
                 st.success("✅ Query submitted! Check output below...")
                 st.session_state.is_processing = True
@@ -356,6 +391,24 @@ with col2:
         "Check SCADA readings",
         "Find troubleshooting procedures"
     ]
+    
+    # Add follow-up examples if in a conversation
+    if st.session_state.conversation_history:
+        st.markdown("**💬 Follow-up Examples:**")
+        follow_up_examples = [
+            "What about the temperature data from my last query?",
+            "Check the pressure trends we discussed earlier",
+            "Compare with previous results",
+            "What else should I check?"
+        ]
+        
+        for example in follow_up_examples:
+            if st.button(example, key=f"followup_{example}", disabled=is_processing):
+                st.session_state.query_input = example
+                st.rerun()
+        
+        st.markdown("---")
+        st.markdown("**🔍 New Queries:**")
     
     for example in examples:
         if st.button(example, key=f"ex_{example}", disabled=is_processing):
@@ -474,36 +527,41 @@ elif st.session_state.is_processing:
 else:
     st.info("**No active processing. Submit a query to see diagnostic output.**")
 
-# Human Decision Interface
-st.header("🤝 Human Decision Interface")
+# Human Decision Interface - Show only when system is awaiting decision
+if st.session_state.awaiting_decision:
+    st.header("🤝 Human Decision Required")
+    st.warning("🔄 **The system is waiting for your decision!** Please choose an action below.")
+    
+    # Decision buttons - Only shown when decision is required
+    decision_col1, decision_col2, decision_col3 = st.columns(3)
 
-# Always show buttons
-st.write("**Human Decision Buttons (Always Available):**")
+    with decision_col1:
+        if st.button("▶️ Continue", key="btn_continue", type="primary"):
+            send_human_decision("c")
 
-# Decision buttons - ALWAYS SHOWN
-decision_col1, decision_col2, decision_col3, decision_col4 = st.columns(4)
+    with decision_col2:
+        if st.button("🔬 Synthesize", key="btn_synthesize", type="secondary"):
+            send_human_decision("s")
 
-with decision_col1:
-    if st.button("▶️ Continue", key="btn_continue", type="primary"):
-        send_human_decision("c")
+    with decision_col3:
+        if st.button("🛑 Quit", key="btn_quit"):
+            send_human_decision("q")
 
-with decision_col2:
-    if st.button("🔬 Synthesize", key="btn_synthesize", type="secondary"):
-        send_human_decision("s")
+    # Show helpful info
+    st.info("""
+    **Decision Interface:**
+    - **Continue**: Proceed with the current plan
+    - **Synthesize**: Force the system to provide a final answer now
+    - **Quit**: Stop the current workflow
+    """)
+elif st.session_state.is_processing:
+    st.header("🤝 Human Decision Interface")
+    st.info("⏳ **System is processing your query...** The decision interface will appear when your input is needed.")
+else:
+    st.header("🤝 Human Decision Interface")
+    st.info("💡 **Submit a query above** to start the diagnostic process. The decision interface will appear when your input is needed.")
 
 
-with decision_col3:
-    if st.button("🛑 Quit", key="btn_quit"):
-        send_human_decision("q")
-
-# Show helpful info
-st.info("""
-**Button Functions:**
-- **Continue**: Proceed with the current plan
-- **Synthesize**: Force the system to provide a final answer now  
-- **Edit Plan**: Modify the execution steps (experimental)
-- **Quit**: Stop the current workflow
-""")
 
 # Footer
 st.markdown("---")
@@ -567,23 +625,68 @@ if final_answer:
     if st.button("🔄 Start New Analysis", type="primary"):
         st.session_state.current_query = ""
         st.session_state.is_processing = False
+        st.session_state.conversation_history = []
         call_api("/api/history", "DELETE")
         st.rerun()
 
     st.markdown("*SentientGrid Diagnostic System - Industrial Workflow Automation*")
 
+# Conversation History Section
+st.header("💬 Conversation History")
+
+# Update conversation history
+update_conversation_history()
+
+if st.session_state.conversation_history:
+    for i, turn in enumerate(st.session_state.conversation_history):
+        with st.expander(f"Turn {i+1}: {turn['user_query'][:50]}...", expanded=False):
+            col1, col2 = st.columns([1, 3])
+            
+            with col1:
+                st.markdown(f"**Query:** {turn['user_query']}")
+                st.markdown(f"**Time:** {turn['timestamp'][:19]}")
+                st.markdown(f"**Steps:** {len(turn['diagnostic_steps'])}")
+            
+            with col2:
+                st.markdown("**Key Findings:**")
+                st.info(turn['context_summary'])
+                
+                if turn['diagnostic_steps']:
+                    st.markdown("**Diagnostic Steps:**")
+                    for j, (step, result) in enumerate(turn['diagnostic_steps']):
+                        st.markdown(f"{j+1}. **{step}**")
+                        st.text(result[:200] + "..." if len(result) > 200 else result)
+    
+    # Conversation management
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("🗑️ Clear History"):
+            if call_api("/api/conversation-history", "DELETE"):
+                st.session_state.conversation_history = []
+                st.success("✅ Conversation history cleared")
+                st.rerun()
+            else:
+                st.error("❌ Failed to clear history")
+    
+    with col2:
+        if st.button("🔄 Refresh History"):
+            update_conversation_history()
+            st.rerun()
 else:
-    # Show message when API key is not configured
-    st.info("👆 **Please configure your Groq API key above to start using the diagnostic system.**")
-    
-    st.markdown("""
-    ### 🚀 What you can do once configured:
-    - Ask diagnostic questions in plain English
-    - Get real-time SCADA data analysis  
-    - Search technical manual procedures
-    - Receive comprehensive troubleshooting guidance
-    - Control the workflow with human-in-the-loop decisions
-    """)
-    
-    st.markdown("---")
-    st.markdown("*SentientGrid Diagnostic System - Industrial Workflow Automation*")
+    st.info("No conversation history yet. Submit a query to start a conversation.")
+
+# Show message when API key is not configured
+st.info("👆 **Please configure your Groq API key above to start using the diagnostic system.**")
+
+st.markdown("""
+### 🚀 What you can do once configured:
+- Ask diagnostic questions in plain English
+- Get real-time SCADA data analysis  
+- Search technical manual procedures
+- Receive comprehensive troubleshooting guidance
+- Control the workflow with human-in-the-loop decisions
+- **NEW: Multi-turn conversations with context awareness**
+""")
+
+st.markdown("---")
+st.markdown("*SentientGrid Diagnostic System - Industrial Workflow Automation*")

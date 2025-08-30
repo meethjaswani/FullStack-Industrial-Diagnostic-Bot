@@ -37,6 +37,11 @@ class SystemState:
         self.human_decision_response = None
         self.human_input_event = None
         self.workflow_history = []
+
+    def set_awaiting_human_input(self, awaiting: bool):
+        """Set the awaiting human input flag"""
+        self.awaiting_human_input = awaiting
+
         
 system_state = SystemState()
 
@@ -45,8 +50,10 @@ class QueryRequest(BaseModel):
     query: str
 
 class HumanDecision(BaseModel):
-    choice: str  # 'c', 's', 'e', 'q'
-    plan_steps: Optional[List[str]] = None
+    choice: str
+
+class AwaitingHumanInput(BaseModel):
+    awaiting: bool
 
 # Custom print capture for terminal output
 class TerminalCapture:
@@ -225,6 +232,7 @@ async def process_query(query: str):
         print(f"\n--- Processing query: '{query}' ---")
         print("🔍 Starting diagnostic workflow...")
         
+        # Call orchestrator for conversation continuity
         result = await system_state.orchestrator.run_diagnostic_workflow(query)
         
         print("\n" + "="*60)
@@ -254,8 +262,6 @@ async def submit_human_decision(decision: HumanDecision, x_groq_api_key: Optiona
     if x_groq_api_key:
         set_groq_api_key(x_groq_api_key)
         
-    print(f"👤 Human decision received: {decision.choice}")
-    
     # Store in shared decision file
     import shared_decision
     shared_decision.set_decision(decision.choice)
@@ -282,6 +288,12 @@ async def clear_human_decision_response():
     shared_decision.clear_decision()
     system_state.human_decision_response = None
     return {"status": "cleared"}
+
+@app.post("/api/set-awaiting-human-input")
+async def set_awaiting_human_input(awaiting: AwaitingHumanInput):
+    """Set the awaiting human input flag"""
+    system_state.set_awaiting_human_input(awaiting.awaiting)
+    return {"status": "updated", "awaiting_human_input": awaiting.awaiting}
 
 @app.get("/api/terminal-output")
 async def get_terminal_output():
@@ -317,6 +329,25 @@ async def clear_history():
     system_state.workflow_history = []
     system_state.terminal_output = []
     return {"status": "history_cleared"}
+
+# Session management endpoints
+@app.get("/api/conversation-history")
+async def get_conversation_history():
+    """Get the conversation history"""
+    if not system_state.orchestrator:
+        raise HTTPException(status_code=500, detail="System not initialized")
+    
+    history = system_state.orchestrator.get_conversation_history()
+    return {"conversation_history": history}
+
+@app.delete("/api/conversation-history")
+async def clear_conversation_history():
+    """Clear the conversation history"""
+    if not system_state.orchestrator:
+        raise HTTPException(status_code=500, detail="System not initialized")
+    
+    system_state.orchestrator.clear_conversation_history()
+    return {"message": "Conversation history cleared successfully"}
 
 if __name__ == "__main__":
     import uvicorn

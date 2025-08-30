@@ -18,13 +18,25 @@ class PlannerAgent:
         # self.google_api_key = os.getenv("GOOGLE_API_KEY") # Handled by utils.py now
 
     def create_plan(self, state: DiagnosticState) -> dict:
-        """Create diagnostic execution plan with SCADA: or MANUAL: prefixes"""
+        """Create diagnostic execution plan with SCADA: or MANUAL: prefixes and conversation context"""
         user_query = state["input"]
-        print(f"🧠 {self.name}: Analyzing query '{user_query}'")
+        conversation_context = state.get("current_turn_context", "")
+        turn_number = state.get("turn_number", 1)
+        
+        print(f"🧠 {self.name}: Analyzing query '{user_query}' (Turn {turn_number})")
+        
+        if conversation_context and turn_number > 1:
+            print(f"📚 {self.name}: Using conversation context for follow-up question")
 
+        # Enhanced planning prompt with conversation context
         planning_prompt = f"""You are an industrial diagnostics planning agent for a SentientGrid system.
 
 For the given diagnostic query, create a step-by-step execution plan using ONLY the available tools.
+
+{'CONVERSATION CONTEXT (Previous Analysis):' if conversation_context else 'NEW CONVERSATION:'}
+{conversation_context if conversation_context else 'This is the first query in the session.'}
+
+CURRENT QUERY: "{user_query}"
 
 Available Tools (ONLY THESE):
 - SCADA: Access real-time sensor data (pressure, temperature, vibration, RPM, load, error codes)
@@ -35,6 +47,13 @@ CRITICAL CONSTRAINTS:
 2. ONLY create steps that these tools can execute
 3. DO NOT create analysis, synthesis, or comparison steps (another agent handles that separately)
 4. Maximum 3 steps total
+5. For follow-up questions, consider what was already analyzed in previous turns
+
+FOLLOW-UP QUESTION GUIDANCE:
+- If user asks "what about X from my last query" → Focus on the specific aspect X
+- If user asks "check the trends we discussed" → Query relevant historical data
+- If user asks "compare with previous results" → Get current data for comparison
+- If user asks "what else should I check" → Suggest additional diagnostic steps
 
 Query: "{user_query}"
 
@@ -42,6 +61,8 @@ Good Examples:
 - "What is the pressure in March?" → ["SCADA: Get March pressure readings"]
 - "How do I fix a pump leak?" → ["MANUAL: Search for pump leak repair procedures"]
 - "Pressure is high, what should I do?" → ["SCADA: Check current pressure readings", "MANUAL: Find high pressure troubleshooting procedures"]
+- "What about the temperature data from my last query?" → ["SCADA: Get current temperature readings for comparison"]
+- "Check the pressure trends we discussed earlier" → ["SCADA: Get historical pressure data for trend analysis"]
 
 Bad Examples (DON'T DO THIS):
 - "Analyze the pressure data" ❌ (Analysis is not a tool)
@@ -61,6 +82,7 @@ MANUAL Tool Can Do:
 - Find maintenance instructions
 
 Create a logical plan with 1-3 steps that ONLY use these tools for data gathering.
+Consider the conversation context when planning follow-up questions.
 
 Respond with ONLY a JSON object like this example:
 {{"steps": ["SCADA: get specific data", "MANUAL: search for specific procedures"]}}"""
@@ -78,7 +100,7 @@ Respond with ONLY a JSON object like this example:
                 if ":" in step:
                     tool_name = step.split(":")[0]
                     step_desc = step.split(":", 1)[1].strip()
-                    print(f"  {i}. [{tool_name}] {step_desc}")
+                    print(f"  {i}. {tool_name}: {step_desc}")
                 else:
                     print(f"  {i}. {step}")
 

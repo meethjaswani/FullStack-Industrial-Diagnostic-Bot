@@ -4,52 +4,37 @@ An advanced multi-agent AI diagnostic system that intelligently combines SCADA s
 
 ## 🚀 Quick Setup
 
-### 🐳 Docker Deployment
-This project uses Docker to create a self-contained, multi-service application. This is the recommended method for easy setup and consistency across different environments.
+### 🐳 Docker Deployment (Recommended)
+This project uses Docker to create a self-contained, multi-service application.
 
-Prerequisites: You need Docker Desktop installed on your machine.
+**Prerequisites:** Docker Desktop installed on your machine.
 
-1. Clone the repository:
-
-git clone <your-repo-url>
-cd SentientAI-main
-
-2. Start the application:
-This command will build the Docker images for both the api and web services and then start the containers in the background.
-
-docker-compose up -d --build
-
-3. Access the system:
-Once the containers are running, you can access the application at the following addresses:
-
-🌐 Web Interface: http://localhost:8501
-
-📊 API Server: http://localhost:8000
-
-📚 API Docs: http://localhost:8000/docs
-
-4. Stop the application:
-When you are finished, you can stop all the running containers with a single command from the same directory:
-
- docker-compose down
-
-**Prerequisites:** Docker and Docker Compose installed
-
+1. **Clone the repository:**
 ```bash
-# 1. Clone the repository
 git clone <your-repo-url>
 cd SentientAI-main
-
-# 2. Deploy with one command
-./deploy.sh deploy
-
-# That's it! 🎉
 ```
 
-**Access the system:**
+2. **Create .env file with your Groq API key:**
+```bash
+echo "GROQ_API_KEY=your_actual_api_key_here" > .env
+```
+**Important:** Replace `your_actual_api_key_here` with your actual Groq API key from [Groq Console](https://console.groq.com/)
+
+3. **Start the application:**
+```bash
+docker-compose up -d --build
+```
+
+4. **Access the system:**
 - 🌐 **Web Interface**: http://localhost:8501
 - 📊 **API Server**: http://localhost:8000
 - 📚 **API Docs**: http://localhost:8000/docs
+
+5. **Stop the application:**
+```bash
+docker-compose down
+```
 
 ### 📋 Manual Setup (Development)
 
@@ -60,8 +45,8 @@ cd SentientAI-main
 ```bash
 git clone <your-repo-url>
 cd SentientAI-main
-python3 -m venv venv
-source venv/bin/activate 
+python3 -m venv .venv
+source .venv/bin/activate 
 pip install -r requirements.txt
 ```
 
@@ -88,9 +73,7 @@ Place any PDF technical manuals in `data/pdf_manuals/` folder. Supported brands 
 - KUKA quantec manuals
 - And more...
 
-#### 4. Choose Your Interface
-
-**Option A: Web Interface (Recommended)**
+#### 4. Start the Services
 ```bash
 # Terminal 1: Start API server
 python api_server.py
@@ -99,11 +82,6 @@ python api_server.py
 streamlit run streamlit_app.py
 ```
 Then open http://localhost:8501 in your browser
-
-**Option B: Command Line**
-```bash
-python main.py
-```
 
 </details>
 
@@ -125,11 +103,12 @@ python main.py
 5. **🤝 Human-in-the-Loop** - You review and approve at key decision points
 
 **Intelligent Features:**
-- ✅ Sequential step numbering (1, 2, 3...)
-- ✅ Duplicate detection to prevent infinite loops
-- ✅ Auto-tool detection (SCADA vs Manual search)
-- ✅ Real-time human decision interface
-- ✅ Clean, organized output with clear sections
+- ✅ **Human Review After 1 Iteration** - System asks for your input early
+- ✅ **Clean, Professional Output** - No redundant or verbose messages
+- ✅ **Duplicate Detection** - Prevents infinite loops automatically
+- ✅ **Auto-tool Detection** - Intelligently chooses SCADA vs Manual search
+- ✅ **Real-time Human Decision Interface** - Always available when needed
+- ✅ **Multi-turn Conversations** - Builds context from previous queries
 
 ## 🌐 Web Interface Features
 
@@ -141,7 +120,7 @@ python main.py
   - System Initialization & Planning
   - Execution Loop Iterations  
   - Human Decision Interface
-- 📋 Always-available decision buttons (Continue, Synthesize, Edit, Quit)
+- 📋 Decision buttons (Continue, Synthesize, Quit) appear when needed
 - 🧹 Clean message filtering (hides debug info, shows important results)
 - 🔐 Secure session-based API key storage (no files needed)
 
@@ -156,7 +135,8 @@ SentientAI-main/
 │   ├── synthesizer_agent.py  # Creates final answers
 │   ├── scada_agent.py        # SCADA data interface
 │   ├── manual_agent.py       # Manual search interface
-│   └── diagnostic_state.py   # Shared state management
+│   ├── diagnostic_state.py   # Shared state management
+│   └── utils.py              # Utility functions
 ├── manual/                    # Manual search system
 │   ├── create_vector_store.py # PDF processing & vectorization
 │   └── manual_search_tool.py  # Semantic manual search
@@ -165,12 +145,16 @@ SentientAI-main/
 │   └── scada_query_tool.py    # SCADA query interface
 ├── data/
 │   ├── pdf_manuals/          # Your technical manuals (PDF)
+│   ├── scada_data.db         # SCADA database
 │   └── vector_store/         # Processed manual database
 ├── api_server.py             # REST API backend
 ├── streamlit_app.py          # Web interface frontend
-├── main.py                   # Command-line interface
 ├── shared_decision.py        # Human decision coordination
-└── .env                      # Your API key
+├── docker-compose.yml        # Docker orchestration
+├── Dockerfile.api            # API service container
+├── Dockerfile.web            # Web service container
+├── requirements.txt           # Python dependencies
+└── .env                      # Your API key (optional)
 ```
 
 ## 🔧 Development Tools
@@ -205,9 +189,9 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
    ↓
 2. 📋 Diagnostic Plan → ⚙️ Executor Agent  
    ↓
-3. 🔍 Execute Steps → 🤔 Replan Agent
+3. 🔍 Execute Steps → 🤝 Human Review (after 1 iteration)
    ↓
-4. 🤝 Human Review → Decision (Continue/Synthesize/Quit)
+4. 🤔 Replan Agent → Decision (Continue/Synthesize/Quit)
    ↓
 5. 🧬 Synthesizer Agent → 📊 Final Answer
 ```
@@ -218,6 +202,7 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 - Analyzes user queries
 - Creates structured diagnostic plans
 - Determines whether SCADA data or manual procedures are needed
+- **Uses conversation context for follow-up questions**
 
 **⚙️ Executor Agent:**
 - Executes individual plan steps
@@ -235,22 +220,23 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 - Provides actionable recommendations
 
 **🤝 Human-in-the-Loop:**
+- **Automatically triggered after 1 iteration**
 - Reviews system decisions at critical points
-- Can continue, force synthesis, edit plans, or quit
+- Can continue, force synthesis, or quit
 - Maintains control over the diagnostic process
 
-## 🐛 Common Issues
+## 🎯 Key Features & Improvements
 
-| Problem | Solution |
-|---------|----------|
-| "Module not found" | `pip install -r requirements.txt` |
-| "API key error" | Check your `.env` file |
-| "No PDFs found" | Add PDFs to `data/pdf_manuals/` folder |
-| "Vector store not found" | Run manual rebuild command |
-| "Port already in use" | Stop conflicting services or change ports |
-| "Streamlit not loading" | Check both services running |
-| "Human decisions not working" | Ensure `shared_decision.py` file is accessible |
-| "Duplicate steps appearing" | System now auto-detects and prevents this |
+- ✅ **Early Human Review** - System asks for your input after just 1 iteration
+- ✅ **Clean Output** - Removed all redundant and verbose messages
+- ✅ **Professional Formatting** - Consistent, organized output structure
+- ✅ **Smart Step Numbering** - Clean sequential numbering (1, 2, 3)
+- ✅ **Duplicate Prevention** - Automatically detects and prevents repetitive work
+- ✅ **Real-time Web Interface** - Modern dashboard with live updates
+- ✅ **Human Control** - Decision buttons appear exactly when needed
+- ✅ **Auto-tool Detection** - Intelligently chooses SCADA vs Manual search
+- ✅ **Comprehensive Reporting** - Structured final answers with actionable recommendations
+- ✅ **Multi-turn Conversations** - Builds intelligent context from previous queries
 
 ## 💡 Example Diagnostic Workflows
 
@@ -259,6 +245,7 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 Query: "Pressure is very high, help please"
 → Plan: 1. Check SCADA pressure readings, 2. Find pressure troubleshooting procedures  
 → Execute: Gets current pressure data + manual procedures
+→ Human Review: After 1 iteration, you decide to continue or synthesize
 → Result: "Current pressure is 95 PSI (normal: 60-80). Recommended actions: Check relief valve, inspect seals..."
 ```
 
@@ -267,6 +254,7 @@ Query: "Pressure is very high, help please"
 Query: "What was the temperature in March?"
 → Plan: 1. Query SCADA historical data
 → Execute: Retrieves March temperature logs
+→ Human Review: After 1 iteration, you decide to continue or synthesize
 → Result: "March average temperature: 72°F, Range: 68-76°F, Peak occurred on March 15th..."
 ```
 
@@ -275,18 +263,57 @@ Query: "What was the temperature in March?"
 Query: "How do I calibrate the pressure sensor?"
 → Plan: 1. Search manual for calibration procedures
 → Execute: Finds relevant manual sections
+→ Human Review: After 1 iteration, you decide to continue or synthesize
 → Result: "Calibration procedure from Rockwell manual: 1. Power down system, 2. Remove sensor housing..."
 ```
 
-## 🎯 Key Features & Improvements
+**Scenario 4: Multi-turn Conversation with Context**
+```
+Turn 1: "The pump is making unusual noise, what should I check?"
+→ System analyzes pump noise, checks SCADA data, searches manuals
+→ Result: "Pump noise likely due to bearing wear or misalignment. Check vibration levels and inspect bearings."
 
-- ✅ **Smart Step Numbering**: Clean sequential numbering (1, 2, 3) instead of confusing duplicates
-- ✅ **Duplicate Prevention**: Automatically detects and prevents repetitive work
-- ✅ **Clean Output**: Streamlined messages, removed verbose debugging
-- ✅ **Real-time Web Interface**: Modern dashboard with live updates
-- ✅ **Human Control**: Always-available decision buttons for workflow control
-- ✅ **Auto-tool Detection**: Intelligently chooses SCADA vs Manual search
-- ✅ **Comprehensive Reporting**: Structured final answers with actionable recommendations
+Turn 2: "What about the pressure readings from my last query?"
+→ System recognizes this is a follow-up about the same pump
+→ Uses context: "Based on your previous query about pump noise, let me check the current pressure readings..."
+→ Plan: ["SCADA: Get current pressure readings for the noisy pump"]
+→ Result: "Current pressure: 85 PSI (normal: 60-80). Elevated pressure may be contributing to the noise issue you reported earlier."
+
+Turn 3: "Compare this with the vibration data we discussed"
+→ System understands you want to correlate pressure and vibration
+→ Uses context: "Comparing pressure (85 PSI) with vibration data from your pump noise analysis..."
+→ Plan: ["SCADA: Get current vibration readings for correlation with pressure"]
+→ Result: "Pressure: 85 PSI, Vibration: 0.8 g (normal: 0.2-0.5 g). Both elevated - suggests pump strain contributing to noise."
+```
+
+## 🐛 Common Issues
+
+| Problem | Solution |
+|---------|----------|
+| "Module not found" | `pip install -r requirements.txt` |
+| "API key error" | Check your `.env` file or enter in web interface |
+| "No PDFs found" | Add PDFs to `data/pdf_manuals/` folder |
+| "Vector store not found" | Run manual rebuild command |
+| "Port already in use" | Stop conflicting services or change ports |
+| "Streamlit not loading" | Check both services running |
+| "Human decisions not working" | Ensure `shared_decision.py` file is accessible |
+| "Docker build fails" | Ensure Docker Desktop is running and has sufficient resources |
+
+## 🚀 Quick Start Commands
+
+```bash
+# Start the system
+docker-compose up -d --build
+
+# Check status
+curl http://localhost:8000/api/status
+
+# Stop the system
+docker-compose down
+
+# View logs
+docker-compose logs -f
+```
 
 ---
 

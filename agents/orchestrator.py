@@ -1,10 +1,11 @@
-# agents/orchestrator.py (COMPLETE FIXED VERSION)
+# agents/orchestrator.py (COMPLETE FIXED VERSION WITH CONVERSATION SUPPORT)
 import copy
 import asyncio
 import time
+from datetime import datetime
 
-from typing import Dict, Any
-from .diagnostic_state import DiagnosticState
+from typing import Dict, Any, Optional, List
+from .diagnostic_state import DiagnosticState, ConversationTurn
 from .planner_agent import PlannerAgent
 from .executor_agent import ExecutorAgent
 from .scada_agent import ScadaAgent
@@ -14,7 +15,7 @@ from .synthesizer_agent import SynthesizerAgent
 
 class Orchestrator:
     """
-    Orchestrator: Manages the flow of the multi-agent diagnostic system.
+    Orchestrator: Manages the flow of the multi-agent diagnostic system with conversation support.
     """
     def __init__(self):
         self.name = "Orchestrator"
@@ -33,7 +34,30 @@ class Orchestrator:
         self.replan_agent = ReplanAgent()
         self.synthesizer_agent = SynthesizerAgent()
 
+        # Conversation management
+        self.conversation_history: List[ConversationTurn] = []
+        
         print(f"✅ {self.name}: All agents initialized.")
+
+    def _add_conversation_turn(self, turn: ConversationTurn):
+        """Add a completed conversation turn to history"""
+        self.conversation_history.append(turn)
+
+    def _get_conversation_context(self, user_query: str) -> str:
+        """Generate conversation context for follow-up questions"""
+        if not self.conversation_history:
+            return ""
+        
+        # Get the last few turns for context
+        recent_turns = self.conversation_history[-3:]  # Last 3 turns
+        
+        context_parts = []
+        for turn in recent_turns:
+            context_parts.append(f"Query: {turn['user_query']}")
+            context_parts.append(f"Key Findings: {turn['context_summary']}")
+        
+        context = "\n".join(context_parts)
+        return f"Previous conversation context:\n{context}\n\nCurrent query: {user_query}"
 
     async def _human_in_the_loop_review(self, state: DiagnosticState, duplicate_warning: bool = False, too_many_steps_warning: bool = False, replan_failed_warning: bool = False) -> Dict[str, Any]:
         """
@@ -56,6 +80,7 @@ class Orchestrator:
         
         print("Current State Overview:")
         print(f"User Query: {state['input']}")
+        print(f"Turn: {state.get('turn_number', 'Unknown')}")
         
         print(f"Completed Steps ({len(state['past_steps'])}):")
         if state['past_steps']:
@@ -95,10 +120,17 @@ class Orchestrator:
             decision = shared_decision.get_decision()
             if decision:
                 choice = decision
-                print(f"✅ Human decision received from frontend: {choice}")
+                print(f"👤 Human decision received: {choice}")
                 
                 # Clear the decision
                 shared_decision.clear_decision()
+                
+                # Clear the awaiting human input flag since we received a decision
+                try:
+                    import requests
+                    requests.post("http://localhost:8000/api/set-awaiting-human-input", json={"awaiting": False}, timeout=1)
+                except:
+                    pass  # Ignore if API call fails
                 
                 if choice in ['c', 'continue']:
                     return {"action": "continue"}
@@ -123,19 +155,33 @@ class Orchestrator:
 
     async def run_diagnostic_workflow(self, initial_query: str) -> str:
         """
-        Runs the complete diagnostic workflow from planning to synthesis.
+        Runs the complete diagnostic workflow from planning to synthesis with conversation support.
         """
-        # Initialize the shared state
+        # Calculate turn number
+        turn_number = len(self.conversation_history) + 1
+        
+        # Get conversation context for follow-up questions
+        conversation_context = self._get_conversation_context(initial_query)
+        
+        # Initialize the shared state with conversation support
         state: DiagnosticState = {
             "input": initial_query,
             "plan": [],
             "past_steps": [],
             "response": "",
-            "ready_for_synthesis": False
+            "ready_for_synthesis": False,
+            "conversation_history": self.conversation_history,
+            "current_turn_context": conversation_context,
+            "turn_number": turn_number
         }
-        print(f"\n--- Starting Diagnostic Workflow for: '{initial_query}' ---")
+        
+        print(f"\n--- Starting Diagnostic Workflow (Turn: {turn_number}) ---")
+        print(f"Query: '{initial_query}'")
+        
+        if conversation_context and turn_number > 1:
+            print(f"📚 Using conversation context from previous turns...")
 
-        # 1. Planner Step
+        # 1. Planner Step (with conversation context)
         print("\n--- Planner Step ---")
         planner_output = self.planner_agent.create_plan(state)
         state["plan"] = planner_output.get("plan", [])
@@ -143,7 +189,7 @@ class Orchestrator:
             state["response"] = "The planner could not create a valid plan. Please try a different query."
             print(f"🛑 {self.name}: Planner failed to create a plan. Ending workflow.")
             return state["response"]
-
+        
         # Main execution loop
         max_iterations = 5
         current_iteration = 0
@@ -163,11 +209,24 @@ class Orchestrator:
 
                 # Remove the executed step from the plan
                 state["plan"] = state["plan"][1:]
-                print(f"📋 Remaining plan steps: {state['plan']}")
+                if state["plan"]:
+                    print(f"📋 Remaining plan steps: {state['plan']}")
+                else:
+                    print("📋 All planned steps completed.")
 
             # 3. Replan Step
             print("\n--- Replan Step ---")
+            
+            # Check if there's human feedback to process
+            if state.get("human_feedback"):
+                print(f"💬 {self.name}: Processing human feedback in replan step: {state['human_feedback']}")
+            
             replan_output = self.replan_agent.decide_next_action(state)
+            
+            # Clear human feedback after it's been processed
+            if state.get("human_feedback"):
+                print(f"🧹 {self.name}: Clearing processed human feedback")
+                state.pop("human_feedback", None)
 
             # Update state based on replan agent's decision
             if "ready_for_synthesis" in replan_output:
@@ -183,9 +242,11 @@ class Orchestrator:
                 
                 if unique_new_steps:
                     state["plan"] = existing_steps + unique_new_steps
-                    print(f"📋 Replan Agent added {len(unique_new_steps)} unique new steps. Total plan: {state['plan']}")
+                    print(f"📋 Replan Agent: Added {len(unique_new_steps)} new step(s)")
+                    print(f"   Updated plan: {state['plan']}")
                 else:
-                    print(f"⚠️ Replan Agent tried to add duplicate steps. No new steps added.")
+                    print(f"📋 Replan Agent: No new steps added (duplicates detected)")
+                    print(f"   Current plan: {state['plan']}")
             elif "plan" in replan_output and not replan_output["plan"] and not state["ready_for_synthesis"] and not state["response"]:
                 print(f"⚠️ {self.name}: Replan Agent returned empty plan without synthesis signal. Forcing synthesis.")
                 state["ready_for_synthesis"] = True
@@ -202,31 +263,65 @@ class Orchestrator:
                 duplicate_warning = replan_output.get("duplicate_warning", False)
                 too_many_steps_warning = replan_output.get("too_many_steps_warning", False)
                 replan_failed_warning = replan_output.get("replan_failed_warning", False)
+                synthesis_recommended = replan_output.get("synthesis_recommended", False)
                 
-                if has_warnings:
-                    pass  # Warnings already printed by individual agents
+                # Always trigger human review if there are warnings or synthesis is recommended
+                should_review = has_warnings or synthesis_recommended or current_iteration >= 1
                 
-                human_decision = await self._human_in_the_loop_review(
-                    state, 
-                    duplicate_warning, 
-                    too_many_steps_warning, 
-                    replan_failed_warning
-                )
+                if should_review:
+                    print("🤝 HUMAN IN THE LOOP: Review Required")
+                    
+                    # Set the awaiting human input flag in the API server
+                    try:
+                        import requests
+                        requests.post("http://localhost:8000/api/set-awaiting-human-input", json={"awaiting": True}, timeout=1)
+                    except:
+                        pass  # Ignore if API call fails
+                    
+                    human_decision = await self._human_in_the_loop_review(state, duplicate_warning, too_many_steps_warning, replan_failed_warning)
+                    
+                    # Check if a valid human decision was received
+                    if human_decision is None:
+                        print(f"⚠️ {self.name}: No valid human decision received. Waiting for proper input...")
+                        # Continue waiting for human input
+                        continue
 
-                if human_decision["action"] == "quit":
-                    state["response"] = "Workflow aborted by human."
-                    print(f"🛑 {self.name}: Workflow aborted by human. Ending.")
-                    break
-                elif human_decision["action"] == "synthesize":
-                    state["ready_for_synthesis"] = True
-                    print(f"➡️ {self.name}: Human forced synthesis.")
-                elif human_decision["action"] == "edit":
-                    state["plan"] = human_decision.get("new_plan", state["plan"])
-                    print(f"✏️ {self.name}: Human edited plan to: {state['plan']}")
-                    current_iteration = 0
-                # If "continue", loop proceeds as normal
-                elif human_decision["action"] == "continue":
-                    print(f"▶️ {self.name}: Human chose to continue with current plan.")
+                    # Process the human decision
+                    if human_decision and human_decision["action"] == "quit":
+                        state["response"] = "Workflow aborted by human."
+                        print(f"🛑 {self.name}: Workflow aborted by human. Ending.")
+                        break
+                    elif human_decision["action"] == "synthesize":
+                        state["ready_for_synthesis"] = True
+                        print(f"➡️ {self.name}: Human forced synthesis.")
+                    elif human_decision["action"] == "continue":
+                        # Store human feedback for replan agent to use
+                        if human_decision.get("feedback"):
+                            state["human_feedback"] = human_decision["feedback"]
+                            print(f"💬 {self.name}: Human provided feedback for continuation: {human_decision['feedback']}")
+                        print(f"▶️ {self.name}: Human chose to continue with current plan.")
+
+        # Additional human review if we exited the loop without synthesis
+        if not state["ready_for_synthesis"] and not state["response"] and current_iteration > 0:
+            human_decision = await self._human_in_the_loop_review(
+                state, 
+                False,  # No specific warnings
+                False, 
+                False
+            )
+            
+            if human_decision["action"] == "quit":
+                state["response"] = "Workflow aborted by human."
+                print(f"🛑 {self.name}: Workflow aborted by human. Ending.")
+            elif human_decision["action"] == "synthesize":
+                state["ready_for_synthesis"] = True
+                print(f"➡️ {self.name}: Human forced synthesis.")
+            elif human_decision["action"] == "continue":
+                # Store human feedback for replan agent to use
+                if human_decision.get("feedback"):
+                    state["human_feedback"] = human_decision["feedback"]
+                    print(f"💬 {self.name}: Human provided feedback for continuation: {human_decision['feedback']}")
+                print(f"▶️ {self.name}: Human chose to continue with current plan.")
 
         # 4. Synthesizer Step
         if state["ready_for_synthesis"] and not state["response"]:
@@ -238,5 +333,71 @@ class Orchestrator:
             state["response"] = "The diagnostic process completed without a final synthesized response."
             print(f"🛑 {self.name}: Workflow ended without synthesis or response.")
 
-        print("\n--- Diagnostic Workflow Completed ---")
+        # 5. Save conversation turn to history
+        conversation_turn: ConversationTurn = {
+            "timestamp": datetime.now().isoformat(),
+            "user_query": initial_query,
+            "diagnostic_steps": state["past_steps"],
+            "final_response": state["response"],
+            "context_summary": self._generate_context_summary(state)
+        }
+        
+        self._add_conversation_turn(conversation_turn)
+        
+        print(f"\n--- Diagnostic Workflow Completed (Turn: {turn_number}) ---")
+        print("=" * 60)
         return state["response"]
+
+    def _generate_context_summary(self, state: DiagnosticState) -> str:
+        """Generate a summary of key findings for conversation context"""
+        try:
+            # Use Groq API to generate a concise summary
+            import requests
+            import os
+            
+            groq_api_key = os.getenv("GROQ_API_KEY")
+            if not groq_api_key:
+                return "Key findings from diagnostic analysis"
+            
+            # Create summary prompt
+            summary_prompt = f"""Summarize the key findings from this diagnostic session in 2-3 sentences:
+
+User Query: {state['input']}
+Steps Executed: {len(state['past_steps'])} diagnostic steps
+Final Response: {state['response'][:500]}...
+
+Provide a concise summary focusing on the most important findings and recommendations."""
+
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {groq_api_key}",
+                    "Content-Type": "application/json"
+                },
+                json={
+                    "model": "llama3-8b-8192",
+                    "messages": [
+                        {"role": "system", "content": "You are a technical writer. Create concise, clear summaries of diagnostic findings."},
+                        {"role": "user", "content": summary_prompt}
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 150
+                }
+            )
+            
+            if response.status_code == 200:
+                return response.json()["choices"][0]["message"]["content"]
+            else:
+                return "Key findings from diagnostic analysis"
+                
+        except Exception as e:
+            print(f"⚠️ Context summary generation failed: {e}")
+            return "Key findings from diagnostic analysis"
+
+    def get_conversation_history(self) -> List[ConversationTurn]:
+        """Get the conversation history"""
+        return self.conversation_history
+
+    def clear_conversation_history(self):
+        """Clear the conversation history"""
+        self.conversation_history = []
