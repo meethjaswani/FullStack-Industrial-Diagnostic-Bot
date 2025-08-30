@@ -243,16 +243,6 @@ curl -X POST http://localhost:8000/api/human-decision -H "Content-Type: applicat
 
 The system features an intelligent human-in-the-loop interface that gives you full control over the diagnostic process:
 
-> ### 🚨 **QUICK BEHAVIOR REFERENCE**
-> 
-> | Action | Feedback | Result |
-> |--------|----------|--------|
-> | **Continue** | `"check temperature correlations"` | ✏️ **Modifies** existing step: `"SCADA: Check pressure and temperature correlations"` |
-> | **✏️ Edit** | `"check temperature correlations"` | 🔄 **Replaces** plan: `"SCADA: Get temperature correlation data"` |
-> | **Continue** | None | ➡️ **Proceeds** with existing plan unchanged |
-> 
-> **💡 Key Difference**: Continue = Modify existing steps | Edit = Create new plan
-
 ### 🎯 **BUTTON BEHAVIOR SUMMARY**
 
 > **📊 Quick Reference Table**
