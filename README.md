@@ -449,29 +449,3 @@ docker-compose logs -f
 source venv/bin/activate
 python api_server.py & streamlit run streamlit_app.py
 ```
-
-## 📈 Recent Updates & Improvements
-
-### v2.1 - Enhanced Human Decision Interface
-- ✅ **Smart Button Behavior**: Continue modifies existing plans, Edit replaces them entirely
-- ✅ **Natural Language Feedback**: Guide the system with plain English instructions
-- ✅ **Intelligent Plan Management**: AI considers context and avoids excessive steps
-- ✅ **Improved Step Counting**: Flexible limits that accommodate consolidated feedback-enhanced operations
-- ✅ **Enhanced Error Handling**: Better diagnostics and graceful fallbacks
-- ✅ **Development Automation**: New `start_dev.sh` script for easier development setup
-
-### v2.0 - Replanning System Fixes
-- ✅ **Resolved Replanning Failures**: Fixed critical errors in decision-making logic
-- ✅ **Enhanced API Response Parsing**: Robust handling of different Groq API response formats
-- ✅ **Improved Environment Management**: Better validation and setup processes
-- ✅ **Comprehensive Testing**: Full test suite for reliability verification
-
-### v1.5 - Core Features
-- ✅ **Multi-Agent Architecture**: Coordinated planning, execution, and synthesis
-- ✅ **Human-in-the-Loop**: Interactive decision points with human oversight
-- ✅ **Multi-turn Conversations**: Context-aware follow-up question handling
-- ✅ **Professional Output**: Clean, organized diagnostic reports
-
----
-
-**Need help?** Check the troubleshooting section above, review the example workflows, or open an issue on GitHub.
